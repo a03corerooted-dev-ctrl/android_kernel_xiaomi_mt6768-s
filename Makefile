@@ -3,7 +3,7 @@ VERSION = 4
 PATCHLEVEL = 14
 SUBLEVEL = 328
 EXTRAVERSION =
-NAME = Petit Gorille
+NAME = Pulsar
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
