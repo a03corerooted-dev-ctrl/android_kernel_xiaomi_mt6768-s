@@ -1925,8 +1925,6 @@ cont:
 			continue;
 
 		list_add(&page->lru, &page_list);
-		inc_node_page_state(page, NR_ISOLATED_ANON +
-				page_is_file_cache(page));
 		isolated++;
 		rp->nr_scanned++;
 		if ((isolated >= SWAP_CLUSTER_MAX) || !rp->nr_to_reclaim)
