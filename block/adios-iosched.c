@@ -56,7 +56,7 @@
 #include <linux/slab.h>
 #include <linux/timer.h>
 
-#include "elevator.h"
+#include <linux/elevator.h>
 #include "blk.h"
 #include "blk-cgroup.h"
 
