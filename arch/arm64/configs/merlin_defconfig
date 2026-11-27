@@ -83,6 +83,7 @@ CONFIG_CFG80211=y
 # CONFIG_CFG80211_DEFAULT_PS is not set
 # CONFIG_CFG80211_INTERNAL_REGDB is not set
 CONFIG_ZRAM=y
+CONFIG_ZRAM_MULTI_COMP=y
 CONFIG_CRYPTO_ZSTD=y
 # KernelSU's optional SUSFS addon requires SUSFS kernel patches, which this tree does not include.
 # CONFIG_KSU_SUSFS is not set
