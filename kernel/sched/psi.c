@@ -208,6 +208,9 @@ void __init psi_init(void)
 {
 	if (!psi_enable) {
 		static_branch_enable(&psi_disabled);
+#ifdef CONFIG_CGROUPS
+		static_branch_disable(&psi_cgroups_enabled);
+#endif
 		return;
 	}
 
