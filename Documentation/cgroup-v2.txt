@@ -971,8 +971,9 @@ All time durations are in microseconds.
 	descendants.
 
   irq.pressure
-	A read-only nested-key file available on cgroups when
-	CONFIG_IRQ_TIME_ACCOUNTING is enabled.
+	A nested-keyed pressure file available on cgroups when
+	CONFIG_IRQ_TIME_ACCOUNTING is enabled. It supports pressure reads and
+	trigger writes, like the other PSI resource files.
 
 	Shows pressure stall information for IRQ and softirq execution. See
 	Documentation/accounting/psi.txt for details.
