@@ -41,9 +41,13 @@ The format for CPU is as such:
 
 some avg10=0.00 avg60=0.00 avg300=0.00 total=0
 
-and for memory, IO, and IRQ:
+and for memory and IO:
 
 some avg10=0.00 avg60=0.00 avg300=0.00 total=0
+full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+
+For IRQ pressure, the interface reports only:
+
 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
 
 The IRQ interface reports only the "full" line because interrupt
