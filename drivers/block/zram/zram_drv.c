@@ -114,7 +114,7 @@ static void zram_clear_flag(struct zram *zram, u32 index,
 }
 
 /* BACKPORT (v6.2): 2-bit compression-priority index stored in slot flags */
-#define ZRAM_COMP_PRIORITY_MASK	0x3
+#define ZRAM_COMP_PRIORITY_MASK	0x3UL
 
 static inline void zram_set_priority(struct zram *zram, u32 index, u32 prio)
 {
@@ -125,7 +125,8 @@ static inline void zram_set_priority(struct zram *zram, u32 index, u32 prio)
 	 */
 	zram->table[index].flags &= ~(ZRAM_COMP_PRIORITY_MASK <<
 				      ZRAM_COMP_PRIORITY_BIT1);
-	zram->table[index].flags |= (prio << ZRAM_COMP_PRIORITY_BIT1);
+	zram->table[index].flags |= ((unsigned long)prio <<
+				      ZRAM_COMP_PRIORITY_BIT1);
 }
 
 static inline u32 zram_get_priority(struct zram *zram, u32 index)
