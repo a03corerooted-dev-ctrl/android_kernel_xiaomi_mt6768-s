@@ -1268,6 +1268,10 @@ void kernfs_show(struct kernfs_node *kn, bool show)
 {
 	mutex_lock(&kernfs_mutex);
 
+	/* The node may have been removed after its cgroup_file ref was read. */
+	if (kn->parent && RB_EMPTY_NODE(&kn->rb))
+		goto out;
+
 	if (show) {
 		if (kn->flags & KERNFS_HIDDEN) {
 			kn->flags &= ~KERNFS_HIDDEN;
@@ -1284,6 +1288,7 @@ void kernfs_show(struct kernfs_node *kn, bool show)
 		kernfs_drain(kn);
 	}
 
+out:
 	mutex_unlock(&kernfs_mutex);
 }
 
