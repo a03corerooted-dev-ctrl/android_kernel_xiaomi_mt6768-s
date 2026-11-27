@@ -987,25 +987,25 @@ void psi_memstall_leave(unsigned long *flags)
 #ifdef CONFIG_CGROUPS
 int psi_cgroup_alloc(struct cgroup *cgroup)
 {
-	if (static_branch_likely(&psi_disabled))
+	if (!static_branch_likely(&psi_cgroups_enabled))
 		return 0;
 
 	cgroup->psi.pcpu = alloc_percpu(struct psi_group_cpu);
 	if (!cgroup->psi.pcpu)
 		return -ENOMEM;
 	group_init(&cgroup->psi);
+	cgroup->psi.parent = cgroup_psi(cgroup_parent(cgroup));
 	return 0;
 }
 
 void psi_cgroup_free(struct cgroup *cgroup)
 {
-	if (static_branch_likely(&psi_disabled))
+	if (!static_branch_likely(&psi_cgroups_enabled))
 		return;
 
 	cancel_delayed_work_sync(&cgroup->psi.avgs_work);
 	free_percpu(cgroup->psi.pcpu);
-	/* All triggers must be removed by now */
-	WARN_ONCE(cgroup->psi.poll_states, "psi: trigger leak\n");
+	WARN_ONCE(cgroup->psi.poll_states, "psi: trigger leak\\n");
 }
 
 /**
@@ -1015,10 +1015,6 @@ void psi_cgroup_free(struct cgroup *cgroup)
  *
  * Move task to a new cgroup and safely migrate its associated stall
  * state between the different groups.
- *
- * This function acquires the task's rq lock to lock out concurrent
- * changes to the task's scheduling state and - in case the task is
- * running - concurrent changes to its stall state.
  */
 void cgroup_move_task(struct task_struct *task, struct css_set *to)
 {
@@ -1026,11 +1022,7 @@ void cgroup_move_task(struct task_struct *task, struct css_set *to)
 	struct rq_flags rf;
 	struct rq *rq;
 
-	if (static_branch_likely(&psi_disabled)) {
-		/*
-		 * Lame to do this here, but the scheduler cannot be locked
-		 * from the outside, so we move cgroups from inside sched/.
-		 */
+	if (!static_branch_likely(&psi_cgroups_enabled)) {
 		rcu_assign_pointer(task->cgroups, to);
 		return;
 	}
@@ -1053,7 +1045,6 @@ void cgroup_move_task(struct task_struct *task, struct css_set *to)
 	if (task_flags)
 		psi_task_change(task, task_flags, 0);
 
-	/* See comment above */
 	rcu_assign_pointer(task->cgroups, to);
 
 	if (task_flags)
@@ -1061,7 +1052,31 @@ void cgroup_move_task(struct task_struct *task, struct css_set *to)
 
 	task_rq_unlock(rq, task, &rf);
 }
+
+void psi_cgroup_enabled_sync(struct psi_group *group)
+{
+	int cpu;
+
+	if (!group->enabled)
+		return;
+
+	/*
+	 * Rebuild each CPU's state mask while holding its runqueue lock.
+	 * Task counts were maintained even while this group's accounting
+	 * was disabled.
+	 */
+	for_each_possible_cpu(cpu) {
+		struct rq *rq = cpu_rq(cpu);
+		struct rq_flags rf;
+
+		rq_lock_irq(rq, &rf);
+		psi_group_change_schedule(group, cpu, 0, 0, true);
+		rq_unlock_irq(rq, &rf);
+	}
+}
 #endif /* CONFIG_CGROUPS */
+
+
 
 int psi_show(struct seq_file *m, struct psi_group *group, enum psi_res res)
 {
