@@ -1102,7 +1102,7 @@ static unsigned short adios_current_ioprio(void)
 
 	class = IOPRIO_CLASS_BE;
 	level = (task_nice(current) + 20) / 5;
-	if (rt_task(current)) {
+	if (current->policy == SCHED_FIFO || current->policy == SCHED_RR) {
 		class = IOPRIO_CLASS_RT;
 		level = 0;
 	} else if (current->policy == SCHED_IDLE) {
