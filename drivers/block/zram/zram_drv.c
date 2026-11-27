@@ -1127,12 +1127,8 @@ out:
 }
 
 /*
- * Recompress a single slot. Runs entirely under the slot bit-spinlock, so it
- * never sleeps: the new handle uses the same non-reclaiming GFP flags as the
- * write fast-path, and on allocation failure the slot is left unchanged.
- * ponytail: compares raw compressed byte length (not zsmalloc size class);
- * fine for an opportunistic pass. Upgrade to a class-index compare if a newer
- * zsmalloc (zs_lookup_class_index) is ever backported.
+ * Recompress one locked slot with configured secondary algorithms.
+ * The caller holds the slot bit-spinlock and init_lock for reading.
  */
 static int zram_recompress(struct zram *zram, u32 index, struct page *page,
 			   u32 threshold, u32 prio_max)
@@ -1145,36 +1141,46 @@ static int zram_recompress(struct zram *zram, u32 index, struct page *page,
 	int ret;
 
 	handle_old = zram_get_handle(zram, index);
-	if (!handle_old)
-		return 0;
-	if (zram_test_flag(zram, index, ZRAM_SAME) ||
+	if (!handle_old || zram_test_flag(zram, index, ZRAM_SAME) ||
 	    zram_test_flag(zram, index, ZRAM_WB) ||
 	    zram_test_flag(zram, index, ZRAM_UNDER_WB) ||
-	    zram_test_flag(zram, index, ZRAM_HUGE) ||
 	    zram_test_flag(zram, index, ZRAM_INCOMPRESSIBLE))
 		return 0;
 
 	comp_len_old = zram_get_obj_size(zram, index);
-	if (comp_len_old >= huge_class_size)
+	if (threshold && comp_len_old < threshold)
 		return 0;
 
 	cur_prio = zram_get_priority(zram, index);
-	if (cur_prio + 1 > prio_max)
+	if (cur_prio >= prio_max)
 		return 0;
 
-	/* Decompress the current object into the scratch page. */
-	zstrm = zcomp_stream_get(zram->comps[cur_prio]);
-	src = zs_map_object(zram->mem_pool, handle_old, ZS_MM_RO);
-	dst = kmap_atomic(page);
-	ret = zcomp_decompress(zstrm, src, comp_len_old, dst);
-	kunmap_atomic(dst);
-	zs_unmap_object(zram->mem_pool, handle_old);
-	zcomp_stream_put(zram->comps[cur_prio]);
-	if (ret)
-		return ret;
+	/*
+	 * Huge objects are stored uncompressed. Other objects must be
+	 * decompressed with the compressor recorded in their slot metadata.
+	 */
+	if (zram_test_flag(zram, index, ZRAM_HUGE)) {
+		src = zs_map_object(zram->mem_pool, handle_old, ZS_MM_RO);
+		dst = kmap_atomic(page);
+		memcpy(dst, src, PAGE_SIZE);
+		kunmap_atomic(dst);
+		zs_unmap_object(zram->mem_pool, handle_old);
+	} else {
+		zstrm = zcomp_stream_get(zram->comps[cur_prio]);
+		src = zs_map_object(zram->mem_pool, handle_old, ZS_MM_RO);
+		dst = kmap_atomic(page);
+		ret = zcomp_decompress(zstrm, src, comp_len_old, dst);
+		kunmap_atomic(dst);
+		zs_unmap_object(zram->mem_pool, handle_old);
+		zcomp_stream_put(zram->comps[cur_prio]);
+		if (ret)
+			return ret;
+	}
 
-	/* Find the highest-priority algorithm that shrinks it further. */
+	/* Recompression consumes the idle mark, even if no algorithm wins. */
+	zram_clear_flag(zram, index, ZRAM_IDLE);
 	best_len = comp_len_old;
+
 	for (prio = cur_prio + 1; prio <= prio_max; prio++) {
 		if (!zram->comps[prio])
 			continue;
@@ -1187,33 +1193,41 @@ static int zram_recompress(struct zram *zram, u32 index, struct page *page,
 		if (ret)
 			continue;
 
-		if (comp_len_new < best_len && comp_len_new < huge_class_size) {
+		if (comp_len_new < best_len &&
+		    comp_len_new < huge_class_size) {
 			best_len = comp_len_new;
 			best_prio = prio;
 		}
 	}
 
 	if (!best_prio) {
-		/* Nothing did better; do not revisit this slot. */
+		/* All configured secondary algorithms failed to save space. */
 		zram_set_flag(zram, index, ZRAM_INCOMPRESSIBLE);
 		return 0;
 	}
-	if (threshold && best_len > threshold)
+
+	/* A threshold is a minimum worthwhile output-size reduction target. */
+	if (threshold && best_len >= threshold)
 		return 0;
 
-	/* Re-run the winning algorithm and store the smaller object. */
+	/* Re-run the winning compressor before allocating its zsmalloc slot. */
 	zstrm = zcomp_stream_get(zram->comps[best_prio]);
 	src = kmap_atomic(page);
 	ret = zcomp_compress(zstrm, src, &comp_len_new);
 	kunmap_atomic(src);
-	if (ret || comp_len_new > best_len) {
+	if (ret || comp_len_new >= huge_class_size ||
+	    comp_len_new >= comp_len_old) {
 		zcomp_stream_put(zram->comps[best_prio]);
-		return 0;
+		return ret;
 	}
 
+	/*
+	 * No direct reclaim here: the slot lock and per-CPU stream are held.
+	 * On allocation failure, preserve the original slot unchanged.
+	 */
 	handle_new = zs_malloc(zram->mem_pool, comp_len_new,
 			__GFP_KSWAPD_RECLAIM | __GFP_NOWARN |
-			__GFP_HIGHMEM | __GFP_MOVABLE | __GFP_CMA);
+			__GFP_HIGHMEM | __GFP_MOVABLE);
 	if (!handle_new) {
 		zcomp_stream_put(zram->comps[best_prio]);
 		return 0;
@@ -1224,12 +1238,13 @@ static int zram_recompress(struct zram *zram, u32 index, struct page *page,
 	zs_unmap_object(zram->mem_pool, handle_new);
 	zcomp_stream_put(zram->comps[best_prio]);
 
-	zs_free(zram->mem_pool, handle_old);
-	atomic64_sub(comp_len_old, &zram->stats.compr_data_size);
+	/* Reuse the common teardown path to keep huge/compressed stats correct. */
+	zram_free_page(zram, index);
 	zram_set_handle(zram, index, handle_new);
 	zram_set_obj_size(zram, index, comp_len_new);
 	zram_set_priority(zram, index, best_prio);
 	atomic64_add(comp_len_new, &zram->stats.compr_data_size);
+	atomic64_inc(&zram->stats.pages_stored);
 
 	return 0;
 }
@@ -1263,8 +1278,14 @@ static ssize_t recompress_store(struct device *dev,
 				goto out;
 			}
 		} else if (!strcmp(param, "type")) {
-			/* "idle" (default) or "all" */
-			idle_only = strcmp(val, "all");
+			if (!strcmp(val, "idle"))
+				idle_only = true;
+			else if (!strcmp(val, "all"))
+				idle_only = false;
+			else {
+				ret = -EINVAL;
+				goto out;
+			}
 		}
 	}
 
@@ -1283,15 +1304,33 @@ static ssize_t recompress_store(struct device *dev,
 	}
 
 	nr_pages = zram->disksize >> PAGE_SHIFT;
+	if (!zram->comps[ZRAM_SECONDARY_COMP]) {
+		up_read(&zram->init_lock);
+		__free_page(page);
+		ret = -EINVAL;
+		goto out;
+	}
+
 	for (index = 0; index < nr_pages; index++) {
+		int err = 0;
+
 		zram_slot_lock(zram, index);
 		if (!zram_allocated(zram, index))
 			goto next;
 		if (idle_only && !zram_test_flag(zram, index, ZRAM_IDLE))
 			goto next;
-		zram_recompress(zram, index, page, threshold, prio_max);
+		if (zram_test_flag(zram, index, ZRAM_WB) ||
+		    zram_test_flag(zram, index, ZRAM_UNDER_WB) ||
+		    zram_test_flag(zram, index, ZRAM_SAME))
+			goto next;
+
+		err = zram_recompress(zram, index, page, threshold, prio_max);
 next:
 		zram_slot_unlock(zram, index);
+		if (err) {
+			ret = err;
+			break;
+		}
 		cond_resched();
 	}
 
