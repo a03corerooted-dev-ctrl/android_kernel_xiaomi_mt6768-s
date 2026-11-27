@@ -1068,7 +1068,7 @@ out:
 		ad->head_pos = blk_rq_pos(rq) + blk_rq_sectors(rq);
 	spin_unlock_irqrestore(&ad->lock, flags);
 	if (rq)
-		elv_dispatch_sort(q, rq);
+		elv_dispatch_add_tail(q, rq);
 	return !!rq;
 }
 
