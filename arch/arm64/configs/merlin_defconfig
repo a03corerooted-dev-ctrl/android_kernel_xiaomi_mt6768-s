@@ -82,6 +82,8 @@ CONFIG_ZRAM=y
 CONFIG_TASKSTATS=y
 CONFIG_TASK_XACCT=y
 CONFIG_PRLMK=y
+# KernelSU's optional SUSFS addon requires SUSFS kernel patches, which this tree does not include.
+# CONFIG_KSU_SUSFS is not set
 CONFIG_ZRAM_WRITEBACK=y
 CONFIG_BLK_DEV_LOOP_MIN_COUNT=16
 CONFIG_MEDIATEK_SOLUTION=y
