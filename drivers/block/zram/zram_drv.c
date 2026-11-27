@@ -1306,6 +1306,17 @@ static ssize_t recompress_store(struct device *dev,
 	}
 
 	nr_pages = zram->disksize >> PAGE_SHIFT;
+	for (prio = ZRAM_SECONDARY_COMP; prio < ZRAM_MAX_COMPS; prio++) {
+		if (zram->comps[prio])
+			have_secondary = true;
+	}
+	if (!have_secondary) {
+		up_read(&zram->init_lock);
+		__free_page(page);
+		ret = -EINVAL;
+		goto out;
+	}
+
 	for (index = 0; index < nr_pages; index++) {
 		int err = 0;
 
