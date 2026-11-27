@@ -136,6 +136,9 @@ struct psi_trigger {
 };
 
 struct psi_group {
+	struct psi_group *parent;
+	bool enabled;
+
 	/* Protects data used by the aggregator */
 	struct mutex avgs_lock;
 
