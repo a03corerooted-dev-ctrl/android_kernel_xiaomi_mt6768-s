@@ -185,6 +185,7 @@ static void group_init(struct psi_group *group)
 {
 	int cpu;
 
+	group->enabled = true;
 	for_each_possible_cpu(cpu)
 		seqcount_init(&per_cpu_ptr(group->pcpu, cpu)->seq);
 	group->avg_last_update = sched_clock();
@@ -699,7 +700,6 @@ static u32 psi_group_change(struct psi_group *group, int cpu,
 
 	groupc = per_cpu_ptr(group->pcpu, cpu);
 	write_seqcount_begin(&groupc->seq);
-	record_times(groupc, cpu, false);
 
 	/* TSK_ONCPU has no task counter; it is carried in state_mask. */
 	if (clear & TSK_ONCPU) {
@@ -730,36 +730,52 @@ static u32 psi_group_change(struct psi_group *group, int cpu,
 		if (set & (1 << t))
 			groupc->tasks[t]++;
 
+	if (!group->enabled) {
+		/*
+		 * Flush the old non-idle state once after disabling PSI.
+		 * This keeps later delta sampling from underflowing when
+		 * accounting is re-enabled.
+		 */
+		if (groupc->state_mask & (1 << PSI_NONIDLE))
+			record_times(groupc, cpu, false);
+		groupc->state_mask = state_mask;
+		write_seqcount_end(&groupc->seq);
+		return state_mask;
+	}
+
 	for (state = 0; state < NR_PSI_STATES; state++)
 		if (test_state(groupc->tasks, state, state_mask))
 			state_mask |= 1 << state;
 
+	record_times(groupc, cpu, false);
 	groupc->state_mask = state_mask;
 	write_seqcount_end(&groupc->seq);
 	return state_mask;
 }
 
-static struct psi_group *iterate_groups(struct task_struct *task, void **iter)
+static void psi_group_change_schedule(struct psi_group *group, int cpu,
+				      unsigned int clear, unsigned int set,
+				      bool wake_clock)
 {
-	if (*iter == &psi_system)
-		return NULL;
+	u32 state_mask;
 
+	state_mask = psi_group_change(group, cpu, clear, set);
+	if (!group->enabled)
+		return;
+
+	if (state_mask & group->poll_states)
+		psi_schedule_poll_work(group, 1);
+
+	if (wake_clock && !delayed_work_pending(&group->avgs_work))
+		schedule_delayed_work(&group->avgs_work, PSI_FREQ);
+}
+
+static struct psi_group *task_psi_group(struct task_struct *task)
+{
 #ifdef CONFIG_CGROUPS
-	if (static_branch_likely(&psi_cgroups_enabled)) {
-		struct cgroup *cgroup = NULL;
-
-		if (!*iter)
-			cgroup = task->cgroups->dfl_cgrp;
-		else
-			cgroup = cgroup_parent(*iter);
-
-		if (cgroup && cgroup_parent(cgroup)) {
-			*iter = cgroup;
-			return cgroup_psi(cgroup);
-		}
-	}
+	if (static_branch_likely(&psi_cgroups_enabled))
+		return cgroup_psi(task->cgroups->dfl_cgrp);
 #endif
-	*iter = &psi_system;
 	return &psi_system;
 }
 
@@ -784,23 +800,25 @@ void psi_task_switch(struct task_struct *prev, struct task_struct *next,
 		     bool sleep)
 {
 	struct psi_group *group, *common = NULL;
-	void *iter = NULL;
 	int cpu = task_cpu(prev);
 	int clear = TSK_ONCPU, set = 0;
+	bool wake_clock = true;
 
 	if (static_branch_likely(&psi_disabled))
 		return;
 
 	if (next->pid) {
 		psi_flags_change(next, 0, TSK_ONCPU);
-		while ((group = iterate_groups(next, &iter))) {
+		group = task_psi_group(next);
+		while (group) {
 			struct psi_group_cpu *groupc = per_cpu_ptr(group->pcpu, cpu);
 
 			if (groupc->state_mask & PSI_ONCPU) {
 				common = group;
 				break;
 			}
-			psi_group_change(group, cpu, 0, TSK_ONCPU);
+			psi_group_change_schedule(group, cpu, 0, TSK_ONCPU, true);
+			group = group->parent;
 		}
 	}
 
@@ -813,14 +831,21 @@ void psi_task_switch(struct task_struct *prev, struct task_struct *next,
 			clear |= TSK_MEMSTALL_RUNNING;
 		if (prev->in_iowait)
 			set |= TSK_IOWAIT;
+
+		/*
+		 * Don't restart periodic aggregation when its own worker
+		 * is going to sleep, or it would continuously wake itself.
+		 */
+		if (unlikely((prev->flags & PF_WQ_WORKER) &&
+			     wq_worker_last_func(prev) == psi_avgs_work))
+			wake_clock = false;
 	}
 
 	psi_flags_change(prev, clear, set);
-	iter = NULL;
-	while ((group = iterate_groups(prev, &iter))) {
-		if (group == common)
-			break;
-		psi_group_change(group, cpu, clear, set);
+	group = task_psi_group(prev);
+	while (group && group != common) {
+		psi_group_change_schedule(group, cpu, clear, set, wake_clock);
+		group = group->parent;
 	}
 
 	/*
@@ -830,9 +855,9 @@ void psi_task_switch(struct task_struct *prev, struct task_struct *next,
 	if (next->pid && common &&
 	    ((prev->psi_flags ^ next->psi_flags) & ~TSK_ONCPU)) {
 		clear &= ~TSK_ONCPU;
-		psi_group_change(common, cpu, clear, set);
-		while ((group = iterate_groups(prev, &iter)))
-			psi_group_change(group, cpu, clear, set);
+		for (; group; group = group->parent)
+			psi_group_change_schedule(group, cpu, clear, set,
+						  wake_clock);
 	}
 }
 
