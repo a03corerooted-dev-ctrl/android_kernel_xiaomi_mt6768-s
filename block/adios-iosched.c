@@ -44,6 +44,7 @@
 #include <linux/hrtimer.h>
 #include <linux/init.h>
 #include <linux/ioprio.h>
+#include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/math64.h>
 #include <linux/module.h>
@@ -657,8 +658,7 @@ static void adios_fit(struct adios_model *m)
 	 * the old one and let the base absorb the mean.
 	 */
 	if (vxx > mx * mx + (mx * mx >> 6) && exy > mx * my)
-		slope = mul_u64_u64_div_u64(exy - mx * my, 1 << 16,
-					    vxx - mx * mx);
+		slope = adios_mul_pow2_div(exy - mx * my, vxx - mx * mx, 16);
 	if (((slope * mx) >> 16) > my)
 		slope = div64_u64(my << 16, max_t(u64, mx, 1));
 
@@ -1346,6 +1346,7 @@ static ssize_t adios_##name##_store(struct elevator_queue *e,		\
 				 const char *page, size_t count)	\
 {									\
 	struct adios_data *ad = e->elevator_data;				\
+	unsigned long flags;					\
 	u64 v;								\
 	int ret = kstrtou64(page, 10, &v);				\
 									\
