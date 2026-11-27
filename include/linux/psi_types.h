@@ -14,13 +14,16 @@ enum psi_task_count {
 	NR_IOWAIT,
 	NR_MEMSTALL,
 	NR_RUNNING,
-	NR_PSI_TASK_COUNTS = 3,
+	NR_MEMSTALL_RUNNING,
+	NR_PSI_TASK_COUNTS = 4,
 };
 
 /* Task state bitmasks */
 #define TSK_IOWAIT	(1 << NR_IOWAIT)
 #define TSK_MEMSTALL	(1 << NR_MEMSTALL)
-#define TSK_RUNNING	(1 << NR_RUNNING)
+#define TSK_RUNNING		(1 << NR_RUNNING)
+#define TSK_MEMSTALL_RUNNING	(1 << NR_MEMSTALL_RUNNING)
+#define TSK_ONCPU		(1 << NR_PSI_TASK_COUNTS)
 
 /* Resources that workloads could be stalled on */
 enum psi_res {
@@ -42,10 +45,14 @@ enum psi_states {
 	PSI_MEM_SOME,
 	PSI_MEM_FULL,
 	PSI_CPU_SOME,
+	PSI_CPU_FULL,
 	/* Only per-CPU, to weigh the CPU in the global average: */
 	PSI_NONIDLE,
-	NR_PSI_STATES = 6,
+	NR_PSI_STATES = 7,
 };
+
+/* Per-CPU on-CPU marker stored in psi_group_cpu.state_mask. */
+#define PSI_ONCPU	(1 << NR_PSI_STATES)
 
 enum psi_aggregators {
 	PSI_AVGS = 0,
