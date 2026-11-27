@@ -2594,6 +2594,18 @@ static void shrink_node_memcg(struct pglist_data *pgdat, struct mem_cgroup *memc
 
 		cond_resched();
 
+		/*
+		 * Direct global reclaim should stop once its target is met,
+		 * rather than scanning every remaining LRU batch. Preserve
+		 * the default-priority proportional scan and leave kswapd
+		 * and memcg reclaim policy unchanged.
+		 */
+		if (global_reclaim(sc) && !current_is_kswapd() &&
+		    !scan_adjusted &&
+		    sc->nr_reclaimed + nr_reclaimed >=
+				max(nr_to_reclaim, compact_gap(sc->order)))
+			break;
+
 		if (nr_reclaimed < nr_to_reclaim || scan_adjusted)
 			continue;
 
@@ -2689,6 +2701,16 @@ static inline bool should_continue_reclaim(struct pglist_data *pgdat,
 
 	/* If not in reclaim/compaction mode, stop */
 	if (!in_reclaim_compaction(sc))
+		return false;
+
+	/*
+	 * Keep the retry decision consistent with the direct-reclaim
+	 * early exits above. High-order allocations retain compact_gap()
+	 * as their minimum reclaim target.
+	 */
+	if (global_reclaim(sc) && !current_is_kswapd() &&
+	    sc->nr_reclaimed >=
+			max(sc->nr_to_reclaim, compact_gap(sc->order)))
 		return false;
 
 	/* Consider stopping depending on scan and reclaim activity */
@@ -2807,6 +2829,18 @@ static bool shrink_node(pg_data_t *pgdat, struct scan_control *sc)
 				mem_cgroup_iter_break(root, memcg);
 				break;
 			}
+
+		/*
+		 * A full memcg walk is not required after direct reclaim has
+		 * met its goal. Do not apply this to kswapd: it must continue
+		 * balancing memory across the cgroup hierarchy.
+		 */
+		if (global_reclaim(sc) && !current_is_kswapd() &&
+		    sc->nr_reclaimed >=
+				max(sc->nr_to_reclaim, compact_gap(sc->order))) {
+			mem_cgroup_iter_break(root, memcg);
+			break;
+		}
 		} while ((memcg = mem_cgroup_iter(root, memcg, &reclaim)));
 
 		/*
