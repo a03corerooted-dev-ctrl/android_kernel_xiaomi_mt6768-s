@@ -865,25 +865,26 @@ void psi_task_switch(struct task_struct *prev, struct task_struct *next,
 void psi_account_irqtime(struct task_struct *task, u32 delta)
 {
 	int cpu = task_cpu(task);
-	void *iter = NULL;
 	struct psi_group *group;
-	struct psi_group_cpu *groupc;
 
-	if (static_branch_likely(&psi_disabled))
-		return;
-	if (!task->pid || !delta)
+	if (static_branch_likely(&psi_disabled) || !task->pid || !delta)
 		return;
 
-	while ((group = iterate_groups(task, &iter))) {
-		groupc = per_cpu_ptr(group->pcpu, cpu);
+	group = task_psi_group(task);
+	while (group) {
+		if (group->enabled) {
+			struct psi_group_cpu *groupc;
 
-		write_seqcount_begin(&groupc->seq);
-		record_times(groupc, cpu, false);
-		groupc->times[PSI_IRQ_FULL] += delta;
-		write_seqcount_end(&groupc->seq);
+			groupc = per_cpu_ptr(group->pcpu, cpu);
+			write_seqcount_begin(&groupc->seq);
+			record_times(groupc, cpu, false);
+			groupc->times[PSI_IRQ_FULL] += delta;
+			write_seqcount_end(&groupc->seq);
 
-		if (group->poll_states & (1 << PSI_IRQ_FULL))
-			psi_schedule_poll_work(group, 1);
+			if (group->poll_states & (1 << PSI_IRQ_FULL))
+				psi_schedule_poll_work(group, 1);
+		}
+		group = group->parent;
 	}
 }
 #endif
@@ -892,48 +893,32 @@ void psi_task_change(struct task_struct *task, int clear, int set)
 {
 	int cpu = task_cpu(task);
 	struct psi_group *group;
-	bool wake_clock = true;
-	void *iter = NULL;
 
-	if (!task->pid)
+	if (static_branch_likely(&psi_disabled) || !task->pid)
 		return;
 
 	psi_flags_change(task, clear, set);
-
-	/*
-	 * Periodic aggregation shuts off if there is a period of no
-	 * task changes, so we wake it back up if necessary. However,
-	 * don't do this if the task change is the aggregation worker
-	 * itself going to sleep, or we'll ping-pong forever.
-	 */
-	if (unlikely((clear & TSK_RUNNING) &&
-		     (task->flags & PF_WQ_WORKER) &&
-		     wq_worker_last_func(task) == psi_avgs_work))
-		wake_clock = false;
-
-	while ((group = iterate_groups(task, &iter))) {
-		u32 state_mask = psi_group_change(group, cpu, clear, set);
-
-		if (state_mask & group->poll_states)
-			psi_schedule_poll_work(group, 1);
-
-		if (wake_clock && !delayed_work_pending(&group->avgs_work))
-			schedule_delayed_work(&group->avgs_work, PSI_FREQ);
+	group = task_psi_group(task);
+	while (group) {
+		psi_group_change_schedule(group, cpu, clear, set, true);
+		group = group->parent;
 	}
 }
 
 void psi_memstall_tick(struct task_struct *task, int cpu)
 {
-	struct psi_group *group;
-	void *iter = NULL;
+	struct psi_group *group = task_psi_group(task);
 
-	while ((group = iterate_groups(task, &iter))) {
-		struct psi_group_cpu *groupc;
+	while (group) {
+		if (group->enabled) {
+			struct psi_group_cpu *groupc;
 
-		groupc = per_cpu_ptr(group->pcpu, cpu);
-		write_seqcount_begin(&groupc->seq);
-		record_times(groupc, cpu, true);
-		write_seqcount_end(&groupc->seq);
+			groupc = per_cpu_ptr(group->pcpu, cpu);
+			write_seqcount_begin(&groupc->seq);
+			record_times(groupc, cpu, true);
+			write_seqcount_end(&groupc->seq);
+		}
+		group = group->parent;
 	}
 }
 
