@@ -7,9 +7,7 @@
  * severe reclaim inefficiency.
  */
 
-#include <linux/delay.h>
 #include <linux/init.h>
-#include <linux/jiffies.h>
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -31,7 +29,6 @@ static unsigned int lowmem_minfree[6] = {
 	16 * 1024,	/* 64 MiB */
 };
 static int lowmem_minfree_size = 4;
-static unsigned long lowmem_deathpending_timeout;
 static DEFINE_MUTEX(scan_mutex);
 
 static atomic_t shift_adj = ATOMIC_INIT(0);
@@ -91,38 +88,6 @@ static struct notifier_block lmk_vmpr_nb = {
 	.notifier_call = lmk_vmpressure_notifier,
 };
 
-static int test_task_flag(struct task_struct *p, int flag)
-{
-	struct task_struct *t;
-
-	for_each_thread(p, t) {
-		task_lock(t);
-		if (test_tsk_thread_flag(t, flag)) {
-			task_unlock(t);
-			return 1;
-		}
-		task_unlock(t);
-	}
-
-	return 0;
-}
-
-static int test_task_state(struct task_struct *p, int state)
-{
-	struct task_struct *t;
-
-	for_each_thread(p, t) {
-		task_lock(t);
-		if (t->state & state) {
-			task_unlock(t);
-			return 1;
-		}
-		task_unlock(t);
-	}
-
-	return 0;
-}
-
 static unsigned long lowmem_count(struct shrinker *s,
 				  struct shrink_control *sc)
 {
@@ -172,18 +137,6 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 		return 0;
 	}
 
-	if (time_before_eq(jiffies, lowmem_deathpending_timeout)) {
-		rcu_read_lock();
-		for_each_process(tsk) {
-			if (test_task_flag(tsk, TIF_MEMDIE)) {
-				rcu_read_unlock();
-				mutex_unlock(&scan_mutex);
-				return 0;
-			}
-		}
-		rcu_read_unlock();
-	}
-
 	rcu_read_lock();
 	for_each_process(tsk) {
 		struct task_struct *p;
@@ -225,26 +178,17 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 		return 0;
 	}
 
-	if (test_task_flag(selected, TIF_MEMDIE) &&
-	    test_task_state(selected, TASK_UNINTERRUPTIBLE)) {
-		rcu_read_unlock();
-		mutex_unlock(&scan_mutex);
-		return 0;
-	}
-
 	task_lock(selected);
 	get_task_struct(selected);
 	send_sig(SIGKILL, selected, 0);
 	task_unlock(selected);
 
-	lowmem_deathpending_timeout = jiffies + HZ;
 	rem = selected_tasksize;
 	rcu_read_unlock();
 
 	pr_info("lowmemorykiller: killed %s (%d), adj %hd, rss %d pages, threshold %hd\n",
 		selected->comm, selected->pid, selected_oom_score_adj,
 		selected_tasksize, min_score_adj);
-	msleep_interruptible(20);
 	put_task_struct(selected);
 	mutex_unlock(&scan_mutex);
 
