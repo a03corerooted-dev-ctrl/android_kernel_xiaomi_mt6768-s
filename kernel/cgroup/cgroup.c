@@ -3441,12 +3441,14 @@ static ssize_t cgroup_pressure_enable_write(struct kernfs_open_file *of,
 	struct psi_group *psi;
 	int enable, i;
 
-	if (kstrtoint(buf, 0, &enable) || (enable != 0 && enable != 1))
+	if (kstrtoint(strstrip(buf), 0, &enable))
 		return -EINVAL;
+	if (enable != 0 && enable != 1)
+		return -ERANGE;
 
 	cgrp = cgroup_kn_lock_live(of->kn, false);
 	if (!cgrp)
-		return -ENODEV;
+		return -ENOENT;
 
 	psi = cgroup_psi(cgrp);
 	if (READ_ONCE(psi->enabled) != enable) {
