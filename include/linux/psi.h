@@ -25,9 +25,6 @@ static inline struct psi_group *cgroup_psi(struct cgroup *cgrp)
 
 void psi_init(void);
 
-void psi_task_change(struct task_struct *task, int clear, int set);
-void psi_task_switch(struct task_struct *prev, struct task_struct *next,
-		     bool sleep);
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 void psi_account_irqtime(struct task_struct *task, u32 delta);
 #else
@@ -58,8 +55,6 @@ unsigned int psi_trigger_poll(void **trigger_ptr, struct file *file,
 
 static inline void psi_init(void) {}
 static inline void psi_account_irqtime(struct task_struct *task, u32 delta) {}
-static inline void psi_task_switch(struct task_struct *prev,
-				   struct task_struct *next, bool sleep) {}
 
 static inline void psi_memstall_enter(unsigned long *flags) {}
 static inline void psi_memstall_leave(unsigned long *flags) {}
