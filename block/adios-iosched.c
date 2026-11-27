@@ -1354,7 +1354,9 @@ static ssize_t adios_##name##_store(struct elevator_queue *e,		\
 		return ret;						\
 	if (v < (lo) || v > (hi))					\
 		return -EINVAL;						\
+	spin_lock_irqsave(&ad->lock, flags);			\
 	ad->field = v;							\
+	spin_unlock_irqrestore(&ad->lock, flags);		\
 	return count;							\
 }
 
