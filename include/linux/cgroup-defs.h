@@ -378,8 +378,10 @@ struct cgroup {
 	/* used to schedule release agent */
 	struct work_struct release_agent_work;
 
+#ifdef CONFIG_PSI
 	/* handles for per-resource PSI pressure files */
 	struct cgroup_file psi_files[NR_PSI_RESOURCES];
+#endif
 
 	/* used to track pressure stalls */
 	struct psi_group psi;
