@@ -376,6 +376,24 @@ static int adios_bio_cgroup(struct bio *bio, unsigned int *weight)
 #endif
 }
 
+/* Current submitter estimate used by the legacy request-admission hook. */
+#ifdef CONFIG_BLK_CGROUP
+static u8 adios_submitter(void)
+{
+	int cgid;
+
+	rcu_read_lock();
+	cgid = adios_cgroup(task_css(current, io_cgrp_id), NULL);
+	rcu_read_unlock();
+	return adios_index(task_tgid_nr(current), cgid);
+}
+#else
+static u8 adios_submitter(void)
+{
+	return adios_index(task_tgid_nr(current), 0);
+}
+#endif
+
 static struct blkcg_policy_data *adios_cpd_alloc(gfp_t gfp)
 {
 	struct adios_cgd *cgd = kzalloc(sizeof(*cgd), gfp);
@@ -1058,6 +1076,44 @@ static inline enum adios_class adios_class(unsigned int ioprio)
 	}
 }
 
+static unsigned short adios_current_ioprio(void)
+{
+	struct io_context *ioc = current->io_context;
+	unsigned short prio = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_NONE, 0);
+
+	if (ioc)
+		prio = READ_ONCE(ioc->ioprio);
+	if (IOPRIO_PRIO_CLASS(prio) == IOPRIO_CLASS_NONE)
+		prio = IOPRIO_PRIO_VALUE(task_nice_ioclass(current),
+					 task_nice_ioprio(current));
+	return prio;
+}
+
+/*
+ * SQ equivalent of ADIOS's tag-depth limit. The legacy elevator cannot set
+ * per-hctx shallow depths, so stop further allocations from a flow once its
+ * proportional share of the request pool is queued. Synchronous reads retain
+ * the ability to use the full pool, as in ADIOS 4.
+ */
+static int adios_may_queue(struct request_queue *q, unsigned int op)
+{
+	struct adios_data *ad = q->elevator->elevator_data;
+	enum adios_class cls = adios_class(adios_current_ioprio());
+	const struct adios_flow *f = &ad->flows[cls][adios_submitter()];
+	unsigned int others, busy, part;
+
+	others = READ_ONCE(ad->busy[ADIOS_RT]) +
+		 READ_ONCE(ad->busy[ADIOS_BE]);
+	busy = others + READ_ONCE(ad->busy[ADIOS_IDLE]);
+	part = q->nr_requests / (busy + 1);
+	if (cls == ADIOS_IDLE && others)
+		part >>= 3;
+	if (READ_ONCE(f->queued) >= max(part, 1U) &&
+	    !(op_is_sync(op) && !op_is_write(op)))
+		return ELV_MQUEUE_NO;
+	return ELV_MQUEUE_MAY;
+}
+
 static int adios_set_request(struct request_queue *q, struct request *rq,
 			     struct bio *bio, gfp_t gfp)
 {
@@ -1507,6 +1563,7 @@ static struct elevator_type adios_sched = {
 		.elevator_allow_rq_merge_fn	= adios_allow_rq_merge,
 		.elevator_merged_fn		= adios_request_merged,
 		.elevator_merge_req_fn		= adios_requests_merged,
+		.elevator_may_queue_fn		= adios_may_queue,
 		.elevator_set_req_fn		= adios_set_request,
 		.elevator_put_req_fn		= adios_put_request,
 		.elevator_add_req_fn		= adios_add_request,
