@@ -1017,9 +1017,11 @@ static int adios_dispatch(struct request_queue *q, int force)
 		}
 		ad->wait_for = NULL;
 	} else if (force && ad->waiting) {
-		if (ad->wait_for)
+		if (ad->wait_for) {
 			adios_charge(ad, ad->wait_for, ad->wait_for->last_op,
 				     now - ad->wait_since);
+			adios_flow_settle(ad, ad->wait_for);
+		}
 		ad->waiting = false;
 		ad->wait_for = NULL;
 	}
