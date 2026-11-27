@@ -80,6 +80,15 @@ config MQ_IOSCHED_KYBER
 	  synchronous writes, it will self-tune queue depths to achieve that
 	  goal.
 
+config IOSCHED_ADIOS
+	tristate "ADIOS (Adaptive Deadline I/O Scheduler)"
+	default n
+	---help---
+	  ADIOS is an adaptive deadline scheduler. It predicts request service
+	  time from completions and uses the prediction for deadline ordering,
+	  per-process fairness, I/O priority handling and bounded dispatch.
+	  This port targets the legacy single-queue elevator API in Linux 4.14.
+
 config IOSCHED_BFQ
 	tristate "BFQ I/O scheduler"
 	default n
