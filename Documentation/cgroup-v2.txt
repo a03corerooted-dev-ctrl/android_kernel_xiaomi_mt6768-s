@@ -971,7 +971,7 @@ All time durations are in microseconds.
 	descendants.
 
   irq.pressure
-	A read-only nested-key file which exists on non-root cgroups when
+	A read-only nested-key file available on cgroups when
 	CONFIG_IRQ_TIME_ACCOUNTING is enabled.
 
 	Shows pressure stall information for IRQ and softirq execution. See
