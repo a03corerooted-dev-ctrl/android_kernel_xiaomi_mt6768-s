@@ -47,6 +47,7 @@ unsigned int psi_trigger_poll(void **trigger_ptr, struct file *file,
 #else /* CONFIG_PSI */
 
 static inline void psi_init(void) {}
+static inline void psi_account_irqtime(struct task_struct *task, u32 delta) {}
 static inline void psi_task_switch(struct task_struct *prev,
 				   struct task_struct *next, bool sleep) {}
 
