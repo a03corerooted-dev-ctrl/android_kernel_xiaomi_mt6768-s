@@ -43,7 +43,7 @@ static DEFINE_MUTEX(zram_index_mutex);
 
 static int zram_major;
 static struct zram *zram_devices;
-static const char *default_compressor = "lzo";
+static const char *default_compressor = "zstd";
 #define PULSAR_ZRAM_DISKSIZE (4ULL << 30)
 
 /* Module params (documentation at end) */
