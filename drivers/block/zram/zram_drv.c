@@ -1255,6 +1255,8 @@ static ssize_t recompress_store(struct device *dev,
 	struct zram *zram = dev_to_zram(dev);
 	u32 threshold = 0, prio_max = ZRAM_MAX_COMPS - 1;
 	unsigned long nr_pages, index;
+	u32 prio;
+	bool have_secondary = false;
 	bool idle_only = true;
 	struct page *page;
 	char *buffer, *args, *param, *val;
@@ -1304,13 +1306,6 @@ static ssize_t recompress_store(struct device *dev,
 	}
 
 	nr_pages = zram->disksize >> PAGE_SHIFT;
-	if (!zram->comps[ZRAM_SECONDARY_COMP]) {
-		up_read(&zram->init_lock);
-		__free_page(page);
-		ret = -EINVAL;
-		goto out;
-	}
-
 	for (index = 0; index < nr_pages; index++) {
 		int err = 0;
 
@@ -2538,6 +2533,8 @@ static const struct file_operations zraminfo_proc_fops = {
 static int __init zram_init(void)
 {
 	int ret;
+
+	BUILD_BUG_ON(__NR_ZRAM_PAGEFLAGS > BITS_PER_LONG);
 
 	ret = cpuhp_setup_state_multi(CPUHP_ZCOMP_PREPARE, "block/zram:prepare",
 				      zcomp_cpu_up_prepare, zcomp_cpu_dead);
