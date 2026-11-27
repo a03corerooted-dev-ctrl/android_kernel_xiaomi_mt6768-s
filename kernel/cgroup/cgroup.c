@@ -3429,7 +3429,7 @@ static int cgroup_pressure_enable_show(struct seq_file *seq, void *v)
 {
 	struct psi_group *psi = cgroup_psi(seq_css(seq)->cgroup);
 
-	seq_printf(seq, "%d\\n", psi->enabled);
+	seq_printf(seq, "%d\\n", READ_ONCE(psi->enabled));
 	return 0;
 }
 
@@ -3449,7 +3449,7 @@ static ssize_t cgroup_pressure_enable_write(struct kernfs_open_file *of,
 		return -ENODEV;
 
 	psi = cgroup_psi(cgrp);
-	if (psi->enabled != enable) {
+	if (READ_ONCE(psi->enabled) != enable) {
 		for (i = 0; i < NR_PSI_RESOURCES; i++)
 			cgroup_file_show(&cgrp->psi_files[i], enable);
 		WRITE_ONCE(psi->enabled, enable);
