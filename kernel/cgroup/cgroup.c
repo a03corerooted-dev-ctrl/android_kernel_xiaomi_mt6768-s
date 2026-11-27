@@ -3449,16 +3449,20 @@ static ssize_t cgroup_pressure_enable_write(struct kernfs_open_file *of,
 	cgrp = cgroup_kn_lock_live(of->kn, false);
 	if (!cgrp)
 		return -ENOENT;
+	cgroup_get(cgrp);
+	cgroup_kn_unlock(of->kn);
 
 	psi = cgroup_psi(cgrp);
+	mutex_lock(&psi->enable_lock);
 	if (READ_ONCE(psi->enabled) != enable) {
 		for (i = 0; i < NR_PSI_RESOURCES; i++)
 			cgroup_file_show(&cgrp->psi_files[i], enable);
 		WRITE_ONCE(psi->enabled, enable);
 		psi_cgroup_enabled_sync(psi);
 	}
+	mutex_unlock(&psi->enable_lock);
 
-	cgroup_kn_unlock(of->kn);
+	cgroup_put(cgrp);
 	return nbytes;
 }
 
