@@ -6,6 +6,7 @@
 #include <linux/sched.h>
 #include <linux/poll.h>
 #include <linux/cgroup-defs.h>
+#include <linux/cgroup.h>
 
 struct seq_file;
 struct css_set;
@@ -13,6 +14,14 @@ struct css_set;
 #ifdef CONFIG_PSI
 
 extern struct static_key_false psi_disabled;
+extern struct psi_group psi_system;
+
+#ifdef CONFIG_CGROUPS
+static inline struct psi_group *cgroup_psi(struct cgroup *cgrp)
+{
+	return cgrp->id == 1 ? &psi_system : &cgrp->psi;
+}
+#endif
 
 void psi_init(void);
 
@@ -34,6 +43,7 @@ int psi_show(struct seq_file *s, struct psi_group *group, enum psi_res res);
 #ifdef CONFIG_CGROUPS
 int psi_cgroup_alloc(struct cgroup *cgrp);
 void psi_cgroup_free(struct cgroup *cgrp);
+void psi_cgroup_enabled_sync(struct psi_group *group);
 void cgroup_move_task(struct task_struct *p, struct css_set *to);
 
 struct psi_trigger *psi_trigger_create(struct psi_group *group,
@@ -62,6 +72,7 @@ static inline int psi_cgroup_alloc(struct cgroup *cgrp)
 static inline void psi_cgroup_free(struct cgroup *cgrp)
 {
 }
+static inline void psi_cgroup_enabled_sync(struct psi_group *group) {}
 static inline void cgroup_move_task(struct task_struct *p, struct css_set *to)
 {
 	rcu_assign_pointer(p->cgroups, to);
