@@ -186,6 +186,7 @@ static void group_init(struct psi_group *group)
 	int cpu;
 
 	group->enabled = true;
+	mutex_init(&group->enable_lock);
 	for_each_possible_cpu(cpu)
 		seqcount_init(&per_cpu_ptr(group->pcpu, cpu)->seq);
 	group->avg_last_update = sched_clock();
