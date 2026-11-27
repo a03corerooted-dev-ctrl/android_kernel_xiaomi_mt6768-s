@@ -2476,7 +2476,8 @@ static int zraminfo_proc_show(struct seq_file *m, void *v)
 		P2K(atomic_long_read(&pool_stats.pages_compacted)));
 #undef P2K
 #undef B2K
-		seq_printf(m, "Algorithm: [%s]\n", zram_devices->compressor);
+		seq_printf(m, "Algorithm: [%s]\n",
+			   zram_devices->comp_algs[ZRAM_PRIMARY_COMP]);
 	}
 
 	return 0;
