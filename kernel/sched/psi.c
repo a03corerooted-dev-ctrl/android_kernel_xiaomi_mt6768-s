@@ -835,12 +835,10 @@ void psi_account_irqtime(struct task_struct *task, u32 delta)
 	void *iter = NULL;
 	struct psi_group *group;
 	struct psi_group_cpu *groupc;
-	u64 now;
-
+	if (static_branch_likely(&psi_disabled))
+		return;
 	if (!task->pid || !delta)
 		return;
-
-	now = cpu_clock(cpu);
 
 	while ((group = iterate_groups(task, &iter))) {
 		groupc = per_cpu_ptr(group->pcpu, cpu);
