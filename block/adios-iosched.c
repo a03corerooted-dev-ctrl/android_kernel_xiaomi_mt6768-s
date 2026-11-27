@@ -1463,6 +1463,12 @@ static void adios_exit_sched(struct elevator_queue *e)
 /*
  * sysfs
  */
+#define ADIOS_EMIT_AT(page, len, ...) do { \
+	if ((len) < PAGE_SIZE) \
+		(len) += scnprintf((page) + (len), PAGE_SIZE - (len), \
+				   __VA_ARGS__); \
+} while (0)
+
 #define ADIOS_SHOW(name, fmt, expr)					\
 static ssize_t adios_##name##_show(struct elevator_queue *e, char *page)	\
 {									\
@@ -1535,7 +1541,7 @@ static ssize_t adios_model_show(struct elevator_queue *e, char *page)
 		for (k = 0; k < 2; k++) {
 			const struct adios_model *m = &ad->model[op][k];
 
-			len += scnprintf(page + len, PAGE_SIZE - len,
+			ADIOS_EMIT_AT(page, len,
 					     "%-7s %-5s base %llu ns, slope %llu ns/page%s\n",
 					     name[op], k ? "among" : "alone",
 					     m->base, m->slope >> 8,
@@ -1546,13 +1552,13 @@ static ssize_t adios_model_show(struct elevator_queue *e, char *page)
 	for (op = 0; op < ADIOS_OPS; op++) {
 		if (!ad->model[op][0].sums.n && !ad->model[op][1].sums.n)
 			continue;
-		len += scnprintf(page + len, PAGE_SIZE - len, "%-7s level %lld ns, seek",
+		ADIOS_EMIT_AT(page, len, "%-7s level %lld ns, seek",
 				     name[op], ad->level[op]);
 		for (b = 0; b < ADIOS_SEEKS; b++)
-			len += scnprintf(page + len, PAGE_SIZE - len, " %lld", ad->seek[op][b]);
-		len += scnprintf(page + len, PAGE_SIZE - len, " ns\n");
+			ADIOS_EMIT_AT(page, len, " %lld", ad->seek[op][b]);
+		ADIOS_EMIT_AT(page, len, " ns\n");
 	}
-	len += scnprintf(page + len, PAGE_SIZE - len,
+	ADIOS_EMIT_AT(page, len,
 			     "after a read: a read loses %lld ns, a write %lld ns\n"
 			     "after a write: a read loses %lld ns, a write %lld ns\n"
 			     "a read costs others %lld ns, anything else %lld ns\n",
@@ -1595,7 +1601,7 @@ static ssize_t adios_flows_show(struct elevator_queue *e, char *page)
 
 			if (!f->queued && !f->flight && !f->idle_since)
 				continue;
-			len += scnprintf(page + len, PAGE_SIZE - len,
+			ADIOS_EMIT_AT(page, len,
 					     "%-4s %2d weight %u queued %u flight %u behind %lld think %u predicted/measured %llu/1000%s\n",
 					     name[cls], i, f->weight, f->queued,
 					     f->flight,
