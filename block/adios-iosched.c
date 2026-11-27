@@ -1232,6 +1232,7 @@ static int adios_merge(struct request_queue *q, struct request **req,
 		for (node = rb_first_cached(&f->rqs); node; node = rb_next(node)) {
 			rq = rb_entry(node, struct request, rb_node);
 			if (blk_rq_pos(rq) == bio_end &&
+			    blk_try_merge(rq, bio) == ELEVATOR_FRONT_MERGE &&
 			    adios_allow_merge(q, rq, bio)) {
 				*req = rq;
 				spin_unlock_irqrestore(&ad->lock, flags);
