@@ -54,7 +54,7 @@ enum psi_states {
 #endif
 	/* Only per-CPU, to weigh the CPU in the global average: */
 	PSI_NONIDLE,
-	NR_PSI_STATES = 7,
+	NR_PSI_STATES,
 };
 
 /* Per-CPU on-CPU marker stored in psi_group_cpu.state_mask. */
