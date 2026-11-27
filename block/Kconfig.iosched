@@ -83,7 +83,7 @@ config MQ_IOSCHED_KYBER
 config IOSCHED_ADIOS
 	tristate "ADIOS (Adaptive Deadline I/O Scheduler)"
 	default n
-	---help---
+	help
 	  ADIOS is an adaptive deadline scheduler. It predicts request service
 	  time from completions and uses the prediction for deadline ordering,
 	  per-process fairness, I/O priority handling and bounded dispatch.
