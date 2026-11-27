@@ -60,6 +60,17 @@
 
 #define ADIOS_VERSION "4.0.0-rc1"
 
+/* Names used by newer ADIOS sources; map them to the 4.14 ioprio API. */
+#ifndef IOPRIO_PRIO_LEVEL
+#define IOPRIO_PRIO_LEVEL(mask) IOPRIO_PRIO_DATA(mask)
+#endif
+#ifndef IOPRIO_NR_LEVELS
+#define IOPRIO_NR_LEVELS IOPRIO_BE_NR
+#endif
+#ifndef IOPRIO_BE_NORM
+#define IOPRIO_BE_NORM IOPRIO_NORM
+#endif
+
 /* ADIOS 4 policy; block-layer integration adapted to Linux 4.14 SQ. */
 
 enum adios_op {
