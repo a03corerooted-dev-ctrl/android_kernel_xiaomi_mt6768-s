@@ -1243,7 +1243,7 @@ void kernfs_activate(struct kernfs_node *kn)
 
 	pos = NULL;
 	while ((pos = kernfs_next_descendant_post(pos, kn))) {
-		if (!pos || (pos->flags & KERNFS_ACTIVATED))
+		if (!pos || (pos->flags & (KERNFS_ACTIVATED | KERNFS_HIDDEN)))
 			continue;
 
 		WARN_ON_ONCE(pos->parent && RB_EMPTY_NODE(&pos->rb));
@@ -1251,6 +1251,37 @@ void kernfs_activate(struct kernfs_node *kn)
 
 		atomic_sub(KN_DEACTIVATED_BIAS, &pos->active);
 		pos->flags |= KERNFS_ACTIVATED;
+	}
+
+	mutex_unlock(&kernfs_mutex);
+}
+
+/**
+ * kernfs_show - show or hide a kernfs node
+ * @kn: node to update
+ * @show: whether the node should be visible
+ *
+ * Hiding deactivates the node and drains active users before returning.
+ * Hidden nodes are skipped by later kernfs_activate() calls.
+ */
+void kernfs_show(struct kernfs_node *kn, bool show)
+{
+	mutex_lock(&kernfs_mutex);
+
+	if (show) {
+		if (kn->flags & KERNFS_HIDDEN) {
+			kn->flags &= ~KERNFS_HIDDEN;
+			if (kn->flags & KERNFS_ACTIVATED) {
+				WARN_ON_ONCE(atomic_read(&kn->active) !=
+					     KN_DEACTIVATED_BIAS);
+				atomic_sub(KN_DEACTIVATED_BIAS, &kn->active);
+			}
+		}
+	} else if (!(kn->flags & KERNFS_HIDDEN)) {
+		kn->flags |= KERNFS_HIDDEN;
+		if (kernfs_active(kn))
+			atomic_add(KN_DEACTIVATED_BIAS, &kn->active);
+		kernfs_drain(kn);
 	}
 
 	mutex_unlock(&kernfs_mutex);
