@@ -56,6 +56,10 @@ rq_sched_info_depart(struct rq *rq, unsigned long long delta)
 #endif /* CONFIG_SCHEDSTATS */
 
 #ifdef CONFIG_PSI
+void psi_task_change(struct task_struct *task, int clear, int set);
+void psi_task_switch(struct task_struct *prev, struct task_struct *next,
+		     bool sleep);
+
 /*
  * PSI keeps sleep-persistent states separate from runqueue state.
  * The context-switch hook accounts the current task's on-CPU transition.
@@ -132,6 +136,8 @@ static inline void psi_task_tick(struct rq *rq)
 		psi_memstall_tick(rq->curr, cpu_of(rq));
 }
 #else /* CONFIG_PSI */
+static inline void psi_task_switch(struct task_struct *prev,
+				   struct task_struct *next, bool sleep) {}
 static inline void psi_enqueue(struct task_struct *p, bool wakeup) {}
 static inline void psi_dequeue(struct task_struct *p, bool sleep) {}
 static inline void psi_ttwu_dequeue(struct task_struct *p) {}
