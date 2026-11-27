@@ -175,7 +175,7 @@ static u64 psi_period __read_mostly;
 
 /* System-level pressure and stall tracking */
 static DEFINE_PER_CPU(struct psi_group_cpu, system_group_pcpu);
-static struct psi_group psi_system = {
+struct psi_group psi_system = {
 	.pcpu = &system_group_pcpu,
 };
 
@@ -1083,7 +1083,7 @@ int psi_show(struct seq_file *m, struct psi_group *group, enum psi_res res)
 #endif
 	u64 now;
 
-	if (static_branch_likely(&psi_disabled))
+	if (static_branch_likely(&psi_disabled) || !READ_ONCE(group->enabled))
 		return -EOPNOTSUPP;
 
 	/* Update averages before reporting them */
@@ -1161,7 +1161,7 @@ struct psi_trigger *psi_trigger_create(struct psi_group *group,
 	u32 threshold_us;
 	u32 window_us;
 
-	if (static_branch_likely(&psi_disabled))
+	if (static_branch_likely(&psi_disabled) || !READ_ONCE(group->enabled))
 		return ERR_PTR(-EOPNOTSUPP);
 
 	if (sscanf(buf, "some %u %u", &threshold_us, &window_us) == 2)
