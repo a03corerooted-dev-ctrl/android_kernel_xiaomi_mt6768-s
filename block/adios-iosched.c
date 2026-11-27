@@ -1141,7 +1141,21 @@ static int adios_set_request(struct request_queue *q, struct request *rq,
 
 static void adios_put_request(struct request *rq)
 {
-	/* Per-request state is embedded in rq->elv.priv. */
+	struct adios_data *ad;
+	unsigned long flags;
+
+	/*
+	 * Normally completion or requeue has already returned the flight
+	 * charge. Cover the legacy block-layer path that frees a request
+	 * after an issue failure without a normal completion callback.
+	 */
+	if (!(adios_rq(rq)->flags & ADIOS_RQ_FLIGHT))
+		return;
+	ad = rq->q->elevator->elevator_data;
+	spin_lock_irqsave(&ad->lock, flags);
+	adios_landed(ad, rq, 0, false);
+	adios_kick(ad);
+	spin_unlock_irqrestore(&ad->lock, flags);
 }
 
 static void adios_classify(struct adios_data *ad, struct request *rq)
