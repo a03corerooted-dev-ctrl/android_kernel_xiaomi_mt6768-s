@@ -54,6 +54,12 @@ The IRQ interface reports only the "full" line because interrupt
 execution occupies the CPU and prevents the interrupted task from
 making progress.
 
+The cgroup v2 interface also provides a `cgroup.pressure` control
+file. Its default value is `1`; writing `0` disables PSI accounting for
+that cgroup only, and writing `1` re-enables it. The setting is not
+inherited by descendants.
+
+
 The "some" line indicates the share of time in which at least some
 tasks are stalled on a given resource.
 
