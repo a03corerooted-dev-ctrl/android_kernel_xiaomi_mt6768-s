@@ -3425,6 +3425,41 @@ static int cgroup_irq_pressure_show(struct seq_file *seq, void *v)
 }
 #endif
 
+static int cgroup_pressure_enable_show(struct seq_file *seq, void *v)
+{
+	struct psi_group *psi = cgroup_psi(seq_css(seq)->cgroup);
+
+	seq_printf(seq, "%d\\n", psi->enabled);
+	return 0;
+}
+
+static ssize_t cgroup_pressure_enable_write(struct kernfs_open_file *of,
+					    char *buf, size_t nbytes,
+					    loff_t off)
+{
+	struct cgroup *cgrp;
+	struct psi_group *psi;
+	int enable, i;
+
+	if (kstrtoint(buf, 0, &enable) || (enable != 0 && enable != 1))
+		return -EINVAL;
+
+	cgrp = cgroup_kn_lock_live(of->kn, false);
+	if (!cgrp)
+		return -ENODEV;
+
+	psi = cgroup_psi(cgrp);
+	if (psi->enabled != enable) {
+		for (i = 0; i < NR_PSI_RESOURCES; i++)
+			cgroup_file_show(&cgrp->psi_files[i], enable);
+		psi->enabled = enable;
+		psi_cgroup_enabled_sync(psi);
+	}
+
+	cgroup_kn_unlock(of->kn);
+	return nbytes;
+}
+
 static ssize_t cgroup_pressure_write(struct kernfs_open_file *of, char *buf,
 					  size_t nbytes, enum psi_res res)
 {
@@ -3504,7 +3539,8 @@ static void cgroup_pressure_release(struct kernfs_open_file *of)
 
 bool cgroup_psi_enabled(void)
 {
-	return (cgroup_feature_disable_mask & (1 << OPT_FEATURE_PRESSURE)) == 0;
+	return !static_branch_likely(&psi_disabled) &&
+	       !(cgroup_feature_disable_mask & (1 << OPT_FEATURE_PRESSURE));
 }
 
 #else /* CONFIG_PSI */
@@ -3963,6 +3999,28 @@ void cgroup_file_notify(struct cgroup_file *cfile)
 	if (cfile->kn)
 		kernfs_notify(cfile->kn);
 	spin_unlock_irqrestore(&cgroup_file_kn_lock, flags);
+}
+
+/**
+ * cgroup_file_show - show or hide a cgroup file
+ * @cfile: file handle obtained through cftype->file_offset
+ * @show: whether the file should be visible
+ */
+void cgroup_file_show(struct cgroup_file *cfile, bool show)
+{
+	struct kernfs_node *kn;
+	unsigned long flags;
+
+	spin_lock_irqsave(&cgroup_file_kn_lock, flags);
+	kn = cfile->kn;
+	if (kn)
+		kernfs_get(kn);
+	spin_unlock_irqrestore(&cgroup_file_kn_lock, flags);
+
+	if (kn) {
+		kernfs_show(kn, show);
+		kernfs_put(kn);
+	}
 }
 
 /**
@@ -4728,6 +4786,7 @@ static struct cftype cgroup_base_files[] = {
 	{
 		.name = "io.pressure",
 		.flags = CFTYPE_NOT_ON_ROOT | CFTYPE_PRESSURE,
+		.file_offset = offsetof(struct cgroup, psi_files[PSI_IO]),
 		.seq_show = cgroup_io_pressure_show,
 		.write = cgroup_io_pressure_write,
 		.poll = cgroup_pressure_poll,
@@ -4736,6 +4795,7 @@ static struct cftype cgroup_base_files[] = {
 	{
 		.name = "memory.pressure",
 		.flags = CFTYPE_NOT_ON_ROOT | CFTYPE_PRESSURE,
+		.file_offset = offsetof(struct cgroup, psi_files[PSI_MEM]),
 		.seq_show = cgroup_memory_pressure_show,
 		.write = cgroup_memory_pressure_write,
 		.poll = cgroup_pressure_poll,
@@ -4744,6 +4804,7 @@ static struct cftype cgroup_base_files[] = {
 	{
 		.name = "cpu.pressure",
 		.flags = CFTYPE_NOT_ON_ROOT | CFTYPE_PRESSURE,
+		.file_offset = offsetof(struct cgroup, psi_files[PSI_CPU]),
 		.seq_show = cgroup_cpu_pressure_show,
 		.write = cgroup_cpu_pressure_write,
 		.poll = cgroup_pressure_poll,
@@ -4753,12 +4814,19 @@ static struct cftype cgroup_base_files[] = {
 	{
 		.name = "irq.pressure",
 		.flags = CFTYPE_NOT_ON_ROOT | CFTYPE_PRESSURE,
+		.file_offset = offsetof(struct cgroup, psi_files[PSI_IRQ]),
 		.seq_show = cgroup_irq_pressure_show,
 		.write = cgroup_irq_pressure_write,
 		.poll = cgroup_pressure_poll,
 		.release = cgroup_pressure_release,
 	},
 #endif
+	{
+		.name = "cgroup.pressure",
+		.flags = CFTYPE_PRESSURE,
+		.seq_show = cgroup_pressure_enable_show,
+		.write = cgroup_pressure_enable_write,
+	},
 #endif /* CONFIG_PSI */
 	{ }	/* terminate */
 };
