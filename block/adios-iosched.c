@@ -58,7 +58,6 @@
 
 #include <linux/elevator.h>
 #include "blk.h"
-#include "blk-cgroup.h"
 
 #define ADIOS_VERSION "4.0.0-rc1"
 
