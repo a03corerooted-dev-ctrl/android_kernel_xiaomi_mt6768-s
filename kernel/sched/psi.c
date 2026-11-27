@@ -910,7 +910,7 @@ void psi_memstall_tick(struct task_struct *task, int cpu)
 	struct psi_group *group = task_psi_group(task);
 
 	while (group) {
-		if (group->enabled) {
+		if (READ_ONCE(group->enabled)) {
 			struct psi_group_cpu *groupc;
 
 			groupc = per_cpu_ptr(group->pcpu, cpu);
