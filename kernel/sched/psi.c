@@ -820,9 +820,14 @@ void psi_task_switch(struct task_struct *prev, struct task_struct *next,
 		psi_group_change(group, cpu, clear, set);
 	}
 
-	/* Continue above the common ancestor with non-ONCPU state changes. */
-	if (next->pid && ((prev->psi_flags ^ next->psi_flags) & ~TSK_ONCPU)) {
+	/*
+	 * The common ancestor keeps the on-CPU marker, but still needs
+	 * non-ONCPU state changes (sleep, iowait, or memstall) propagated.
+	 */
+	if (next->pid && common &&
+	    ((prev->psi_flags ^ next->psi_flags) & ~TSK_ONCPU)) {
 		clear &= ~TSK_ONCPU;
+		psi_group_change(common, cpu, clear, set);
 		while ((group = iterate_groups(prev, &iter)))
 			psi_group_change(group, cpu, clear, set);
 	}
