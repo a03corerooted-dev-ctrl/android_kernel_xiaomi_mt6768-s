@@ -218,8 +218,11 @@ void __init psi_init(void)
 	group_init(&psi_system);
 }
 
-static bool test_state(unsigned int *tasks, enum psi_states state)
+static bool test_state(unsigned int *tasks, enum psi_states state,
+			 unsigned int state_mask)
 {
+	bool oncpu = !!(state_mask & PSI_ONCPU);
+
 	switch (state) {
 	case PSI_IO_SOME:
 		return tasks[NR_IOWAIT];
@@ -228,9 +231,12 @@ static bool test_state(unsigned int *tasks, enum psi_states state)
 	case PSI_MEM_SOME:
 		return tasks[NR_MEMSTALL];
 	case PSI_MEM_FULL:
-		return tasks[NR_MEMSTALL] && !tasks[NR_RUNNING];
+		return tasks[NR_MEMSTALL] &&
+			tasks[NR_RUNNING] == tasks[NR_MEMSTALL_RUNNING];
 	case PSI_CPU_SOME:
-		return tasks[NR_RUNNING] > 1;
+		return tasks[NR_RUNNING] > oncpu;
+	case PSI_CPU_FULL:
+		return tasks[NR_RUNNING] && !oncpu;
 	case PSI_NONIDLE:
 		return tasks[NR_IOWAIT] || tasks[NR_MEMSTALL] ||
 			tasks[NR_RUNNING];
@@ -670,8 +676,11 @@ static void record_times(struct psi_group_cpu *groupc, int cpu,
 		}
 	}
 
-	if (groupc->state_mask & (1 << PSI_CPU_SOME))
+	if (groupc->state_mask & (1 << PSI_CPU_SOME)) {
 		groupc->times[PSI_CPU_SOME] += delta;
+		if (groupc->state_mask & (1 << PSI_CPU_FULL))
+			groupc->times[PSI_CPU_FULL] += delta;
+	}
 
 	if (groupc->state_mask & (1 << PSI_NONIDLE))
 		groupc->times[PSI_NONIDLE] += delta;
@@ -682,49 +691,48 @@ static u32 psi_group_change(struct psi_group *group, int cpu,
 {
 	struct psi_group_cpu *groupc;
 	unsigned int t, m;
-	enum psi_states s;
-	u32 state_mask = 0;
+	enum psi_states state;
+	u32 state_mask;
 
 	groupc = per_cpu_ptr(group->pcpu, cpu);
-
-	/*
-	 * First we assess the aggregate resource states this CPU's
-	 * tasks have been in since the last change, and account any
-	 * SOME and FULL time these may have resulted in.
-	 *
-	 * Then we update the task counts according to the state
-	 * change requested through the @clear and @set bits.
-	 */
 	write_seqcount_begin(&groupc->seq);
-
 	record_times(groupc, cpu, false);
+
+	/* TSK_ONCPU has no task counter; it is carried in state_mask. */
+	if (clear & TSK_ONCPU) {
+		state_mask = 0;
+		clear &= ~TSK_ONCPU;
+	} else if (set & TSK_ONCPU) {
+		state_mask = PSI_ONCPU;
+		set &= ~TSK_ONCPU;
+	} else {
+		state_mask = groupc->state_mask & PSI_ONCPU;
+	}
 
 	for (t = 0, m = clear; m; m &= ~(1 << t), t++) {
 		if (!(m & (1 << t)))
 			continue;
-		if (groupc->tasks[t] == 0 && !psi_bug) {
-			printk_deferred(KERN_ERR "psi: task underflow! cpu=%d t=%d tasks=[%u %u %u] clear=%x set=%x\n",
+		if (groupc->tasks[t])
+			groupc->tasks[t]--;
+		else if (!psi_bug) {
+			printk_deferred(KERN_ERR "psi: task underflow! cpu=%d t=%d tasks=[%u %u %u %u] clear=%x set=%x\\n",
 					cpu, t, groupc->tasks[0],
 					groupc->tasks[1], groupc->tasks[2],
-					clear, set);
+					groupc->tasks[3], clear, set);
 			psi_bug = 1;
 		}
-		groupc->tasks[t]--;
 	}
 
 	for (t = 0; set; set &= ~(1 << t), t++)
 		if (set & (1 << t))
 			groupc->tasks[t]++;
 
-	/* Calculate state mask representing active states */
-	for (s = 0; s < NR_PSI_STATES; s++) {
-		if (test_state(groupc->tasks, s))
-			state_mask |= (1 << s);
-	}
+	for (state = 0; state < NR_PSI_STATES; state++)
+		if (test_state(groupc->tasks, state, state_mask))
+			state_mask |= 1 << state;
+
 	groupc->state_mask = state_mask;
-
 	write_seqcount_end(&groupc->seq);
-
 	return state_mask;
 }
 
@@ -752,6 +760,74 @@ static struct psi_group *iterate_groups(struct task_struct *task, void **iter)
 	return &psi_system;
 }
 
+static void psi_flags_change(struct task_struct *task, int clear, int set)
+{
+	if (((task->psi_flags & set) ||
+	     (task->psi_flags & clear) != clear) && !psi_bug) {
+		printk_deferred(KERN_ERR "psi: inconsistent task state! task=%d:%s cpu=%d psi_flags=%x clear=%x set=%x\\n",
+				task->pid, task->comm, task_cpu(task),
+				task->psi_flags, clear, set);
+		psi_bug = 1;
+	}
+	task->psi_flags &= ~clear;
+	task->psi_flags |= set;
+}
+
+/*
+ * Transfer the per-CPU on-CPU marker between tasks. Shared cgroup ancestors
+ * are updated once; sleep and memstall differences are propagated separately.
+ */
+void psi_task_switch(struct task_struct *prev, struct task_struct *next,
+		     bool sleep)
+{
+	struct psi_group *group, *common = NULL;
+	void *iter = NULL;
+	int cpu = task_cpu(prev);
+	int clear = TSK_ONCPU, set = 0;
+
+	if (static_branch_likely(&psi_disabled))
+		return;
+
+	if (next->pid) {
+		psi_flags_change(next, 0, TSK_ONCPU);
+		while ((group = iterate_groups(next, &iter))) {
+			struct psi_group_cpu *groupc = per_cpu_ptr(group->pcpu, cpu);
+
+			if (groupc->state_mask & PSI_ONCPU) {
+				common = group;
+				break;
+			}
+			psi_group_change(group, cpu, 0, TSK_ONCPU);
+		}
+	}
+
+	if (!prev->pid)
+		return;
+
+	if (sleep) {
+		clear |= TSK_RUNNING;
+		if (prev->flags & PF_MEMSTALL)
+			clear |= TSK_MEMSTALL_RUNNING;
+		if (prev->in_iowait)
+			set |= TSK_IOWAIT;
+	}
+
+	psi_flags_change(prev, clear, set);
+	iter = NULL;
+	while ((group = iterate_groups(prev, &iter))) {
+		if (group == common)
+			break;
+		psi_group_change(group, cpu, clear, set);
+	}
+
+	/* Continue above the common ancestor with non-ONCPU state changes. */
+	if (next->pid && ((prev->psi_flags ^ next->psi_flags) & ~TSK_ONCPU)) {
+		clear &= ~TSK_ONCPU;
+		while ((group = iterate_groups(prev, &iter)))
+			psi_group_change(group, cpu, clear, set);
+	}
+}
+
 void psi_task_change(struct task_struct *task, int clear, int set)
 {
 	int cpu = task_cpu(task);
@@ -762,17 +838,7 @@ void psi_task_change(struct task_struct *task, int clear, int set)
 	if (!task->pid)
 		return;
 
-	if (((task->psi_flags & set) ||
-	     (task->psi_flags & clear) != clear) &&
-	    !psi_bug) {
-		printk_deferred(KERN_ERR "psi: inconsistent task state! task=%d:%s cpu=%d psi_flags=%x clear=%x set=%x\n",
-				task->pid, task->comm, cpu,
-				task->psi_flags, clear, set);
-		psi_bug = 1;
-	}
-
-	task->psi_flags &= ~clear;
-	task->psi_flags |= set;
+	psi_flags_change(task, clear, set);
 
 	/*
 	 * Periodic aggregation shuts off if there is a period of no
@@ -837,7 +903,8 @@ void psi_memstall_enter(unsigned long *flags)
 	rq = this_rq_lock_irq(&rf);
 
 	current->flags |= PF_MEMSTALL;
-	psi_task_change(current, 0, TSK_MEMSTALL);
+	psi_task_change(current, 0, TSK_MEMSTALL |
+			((current->psi_flags & TSK_RUNNING) ? TSK_MEMSTALL_RUNNING : 0));
 
 	rq_unlock_irq(rq, &rf);
 }
@@ -866,7 +933,8 @@ void psi_memstall_leave(unsigned long *flags)
 	rq = this_rq_lock_irq(&rf);
 
 	current->flags &= ~PF_MEMSTALL;
-	psi_task_change(current, TSK_MEMSTALL, 0);
+	psi_task_change(current, TSK_MEMSTALL |
+			((current->psi_flags & TSK_RUNNING) ? TSK_MEMSTALL_RUNNING : 0), 0);
 
 	rq_unlock_irq(rq, &rf);
 }
@@ -929,8 +997,13 @@ void cgroup_move_task(struct task_struct *task, struct css_set *to)
 	else if (task->in_iowait)
 		task_flags = TSK_IOWAIT;
 
-	if (task->flags & PF_MEMSTALL)
+	if (task->flags & PF_MEMSTALL) {
 		task_flags |= TSK_MEMSTALL;
+		if (task_flags & TSK_RUNNING)
+			task_flags |= TSK_MEMSTALL_RUNNING;
+	}
+	if (task->psi_flags & TSK_ONCPU)
+		task_flags |= TSK_ONCPU;
 
 	if (task_flags)
 		psi_task_change(task, task_flags, 0);
@@ -961,7 +1034,7 @@ int psi_show(struct seq_file *m, struct psi_group *group, enum psi_res res)
 		group->avg_next_update = update_averages(group, now);
 	mutex_unlock(&group->avgs_lock);
 
-	for (full = 0; full < 2 - (res == PSI_CPU); full++) {
+	for (full = 0; full < 2 - (res == PSI_CPU && group == &psi_system); full++) {
 		unsigned long avg[3];
 		u64 total;
 		int w;
