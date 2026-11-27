@@ -964,6 +964,12 @@ All time durations are in microseconds.
 	Shows pressure stall information for CPU. See
 	Documentation/accounting/psi.txt for details.
 
+  cgroup.pressure
+	A read-write single-value file accepting "0" or "1". The default is
+	"1". Writing "0" disables PSI accounting for this cgroup; writing "1"
+	re-enables it. This setting is not hierarchical and does not affect
+	descendants.
+
   irq.pressure
 	A read-only nested-key file which exists on non-root cgroups when
 	CONFIG_IRQ_TIME_ACCOUNTING is enabled.
