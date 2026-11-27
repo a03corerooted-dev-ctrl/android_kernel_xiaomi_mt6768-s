@@ -3903,6 +3903,7 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
 {
 	kcov_prepare_switch(prev);
 	sched_info_switch(rq, prev, next);
+	psi_task_switch(prev, next, prev->state != TASK_RUNNING);
 	perf_event_task_sched_out(prev, next);
 	hook_ca_context_switch(rq, prev, next);
 	fire_sched_out_preempt_notifiers(prev, next);
