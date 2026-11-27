@@ -44,6 +44,7 @@ static DEFINE_MUTEX(zram_index_mutex);
 static int zram_major;
 static struct zram *zram_devices;
 static const char *default_compressor = "lzo";
+#define PULSAR_ZRAM_DISKSIZE (4ULL << 30)
 
 /* Module params (documentation at end) */
 static unsigned int num_devices = 1;
@@ -1721,7 +1722,8 @@ static ssize_t disksize_store(struct device *dev,
 	struct zram *zram = dev_to_zram(dev);
 	int err;
 
-	disksize = memparse(buf, NULL);
+	/* Keep the logical zram device size fixed at 4 GiB. */
+	disksize = PULSAR_ZRAM_DISKSIZE;
 	if (!disksize)
 		return -EINVAL;
 
