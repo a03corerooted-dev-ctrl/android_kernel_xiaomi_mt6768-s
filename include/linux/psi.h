@@ -19,7 +19,7 @@ extern struct psi_group psi_system;
 #ifdef CONFIG_CGROUPS
 static inline struct psi_group *cgroup_psi(struct cgroup *cgrp)
 {
-	return cgrp->id == 1 ? &psi_system : &cgrp->psi;
+	return cgroup_parent(cgrp) ? &cgrp->psi : &psi_system;
 }
 #endif
 
