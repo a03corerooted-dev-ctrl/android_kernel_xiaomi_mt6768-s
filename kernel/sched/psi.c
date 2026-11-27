@@ -730,7 +730,7 @@ static u32 psi_group_change(struct psi_group *group, int cpu,
 		if (set & (1 << t))
 			groupc->tasks[t]++;
 
-	if (!group->enabled) {
+	if (!READ_ONCE(group->enabled)) {
 		/*
 		 * Flush the old non-idle state once after disabling PSI.
 		 * This keeps later delta sampling from underflowing when
@@ -760,7 +760,7 @@ static void psi_group_change_schedule(struct psi_group *group, int cpu,
 	u32 state_mask;
 
 	state_mask = psi_group_change(group, cpu, clear, set);
-	if (!group->enabled)
+	if (!READ_ONCE(group->enabled))
 		return;
 
 	if (state_mask & group->poll_states)
@@ -872,7 +872,7 @@ void psi_account_irqtime(struct task_struct *task, u32 delta)
 
 	group = task_psi_group(task);
 	while (group) {
-		if (group->enabled) {
+		if (READ_ONCE(group->enabled)) {
 			struct psi_group_cpu *groupc;
 
 			groupc = per_cpu_ptr(group->pcpu, cpu);
@@ -1057,13 +1057,10 @@ void psi_cgroup_enabled_sync(struct psi_group *group)
 {
 	int cpu;
 
-	if (!group->enabled)
-		return;
-
 	/*
-	 * Rebuild each CPU's state mask while holding its runqueue lock.
-	 * Task counts were maintained even while this group's accounting
-	 * was disabled.
+	 * Flush old active states on disable, or rebuild them on enable.
+	 * Task counts were maintained while this group's accounting was
+	 * disabled, so no task walk is needed.
 	 */
 	for_each_possible_cpu(cpu) {
 		struct rq *rq = cpu_rq(cpu);
