@@ -57,10 +57,8 @@ rq_sched_info_depart(struct rq *rq, unsigned long long delta)
 
 #ifdef CONFIG_PSI
 /*
- * PSI tracks state that persists across sleeps, such as iowaits and
- * memory stalls. As a result, it has to distinguish between sleeps,
- * where a task's runnable state changes, and requeues, where a task
- * and its state are being moved between CPUs and runqueues.
+ * PSI keeps sleep-persistent states separate from runqueue state.
+ * The context-switch hook accounts the current task's on-CPU transition.
  */
 static inline void psi_enqueue(struct task_struct *p, bool wakeup)
 {
@@ -71,14 +69,14 @@ static inline void psi_enqueue(struct task_struct *p, bool wakeup)
 
 	if (!wakeup || p->sched_psi_wake_requeue) {
 		if (p->flags & PF_MEMSTALL)
-			set |= TSK_MEMSTALL;
-		if (p->sched_psi_wake_requeue)
-			p->sched_psi_wake_requeue = 0;
+			set |= TSK_MEMSTALL | TSK_MEMSTALL_RUNNING;
+		p->sched_psi_wake_requeue = 0;
 	} else {
 		if (p->in_iowait)
 			clear |= TSK_IOWAIT;
+		if (p->flags & PF_MEMSTALL)
+			set |= TSK_MEMSTALL | TSK_MEMSTALL_RUNNING;
 	}
-
 	psi_task_change(p, clear, set);
 }
 
@@ -89,14 +87,19 @@ static inline void psi_dequeue(struct task_struct *p, bool sleep)
 	if (static_branch_likely(&psi_disabled))
 		return;
 
+	/* A voluntary sleep is completed atomically by psi_task_switch(). */
+	if (sleep && (p->psi_flags & TSK_ONCPU))
+		return;
+
 	if (!sleep) {
 		if (p->flags & PF_MEMSTALL)
-			clear |= TSK_MEMSTALL;
+			clear |= TSK_MEMSTALL | TSK_MEMSTALL_RUNNING;
 	} else {
+		if (p->flags & PF_MEMSTALL)
+			clear |= TSK_MEMSTALL_RUNNING;
 		if (p->in_iowait)
 			set |= TSK_IOWAIT;
 	}
-
 	psi_task_change(p, clear, set);
 }
 
@@ -104,11 +107,6 @@ static inline void psi_ttwu_dequeue(struct task_struct *p)
 {
 	if (static_branch_likely(&psi_disabled))
 		return;
-	/*
-	 * Is the task being migrated during a wakeup? Make sure to
-	 * deregister its sleep-persistent psi states from the old
-	 * queue, and let psi_enqueue() know it has to requeue.
-	 */
 	if (unlikely(p->in_iowait || (p->flags & PF_MEMSTALL))) {
 		struct rq_flags rf;
 		struct rq *rq;
@@ -117,7 +115,7 @@ static inline void psi_ttwu_dequeue(struct task_struct *p)
 		if (p->in_iowait)
 			clear |= TSK_IOWAIT;
 		if (p->flags & PF_MEMSTALL)
-			clear |= TSK_MEMSTALL;
+			clear |= TSK_MEMSTALL | TSK_MEMSTALL_RUNNING;
 
 		rq = __task_rq_lock(p, &rf);
 		psi_task_change(p, clear, 0);
@@ -130,7 +128,6 @@ static inline void psi_task_tick(struct rq *rq)
 {
 	if (static_branch_likely(&psi_disabled))
 		return;
-
 	if (unlikely(rq->curr->flags & PF_MEMSTALL))
 		psi_memstall_tick(rq->curr, cpu_of(rq));
 }
