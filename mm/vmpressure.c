@@ -23,6 +23,8 @@
 #include <linux/swap.h>
 #include <linux/printk.h>
 #include <linux/vmpressure.h>
+#include <linux/notifier.h>
+#include <linux/memcontrol.h>
 
 /*
  * The window size (vmpressure_win) is the number of scanned pages before
@@ -48,6 +50,23 @@ static const unsigned long vmpressure_win = SWAP_CLUSTER_MAX * 16;
  */
 static const unsigned int vmpressure_level_med = 60;
 static const unsigned int vmpressure_level_critical = 95;
+
+static BLOCKING_NOTIFIER_HEAD(vmpressure_notifier);
+
+int vmpressure_notifier_register(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_register(&vmpressure_notifier, nb);
+}
+
+int vmpressure_notifier_unregister(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_unregister(&vmpressure_notifier, nb);
+}
+
+static void vmpressure_notify(unsigned long pressure)
+{
+	blocking_notifier_call_chain(&vmpressure_notifier, pressure, NULL);
+}
 
 /*
  * When there are too little pages left to scan, vmpressure() may miss the
@@ -121,8 +140,8 @@ static enum vmpressure_levels vmpressure_level(unsigned long pressure)
 	return VMPRESSURE_LOW;
 }
 
-static enum vmpressure_levels vmpressure_calc_level(unsigned long scanned,
-						    unsigned long reclaimed)
+static unsigned long vmpressure_calc_pressure(unsigned long scanned,
+						 unsigned long reclaimed)
 {
 	unsigned long scale = scanned + reclaimed;
 	unsigned long pressure = 0;
@@ -133,18 +152,21 @@ static enum vmpressure_levels vmpressure_calc_level(unsigned long scanned,
 	 * related increment to scanned pages.
 	 */
 	if (reclaimed >= scanned)
-		goto out;
+		return 0;
+
 	/*
-	 * We calculate the ratio (in percents) of how many pages were
-	 * scanned vs. reclaimed in a given time frame (window). Note that
-	 * time is in VM reclaimer's "ticks", i.e. number of pages
-	 * scanned. This makes it possible to set desired reaction time
-	 * and serves as a ratelimit.
+	 * Calculate the percentage of scanned pages that could not be
+	 * reclaimed in this accounting window.
 	 */
 	pressure = scale - (reclaimed * scale / scanned);
-	pressure = pressure * 100 / scale;
+	return pressure * 100 / scale;
+}
 
-out:
+static enum vmpressure_levels vmpressure_calc_level(unsigned long scanned,
+						    unsigned long reclaimed)
+{
+	unsigned long pressure = vmpressure_calc_pressure(scanned, reclaimed);
+
 	pr_debug("%s: %3lu  (s: %lu  r: %lu)\n", __func__, pressure,
 		 scanned, reclaimed);
 
@@ -186,6 +208,7 @@ static void vmpressure_work_fn(struct work_struct *work)
 	struct vmpressure *vmpr = work_to_vmpressure(work);
 	unsigned long scanned;
 	unsigned long reclaimed;
+	unsigned long pressure;
 	enum vmpressure_levels level;
 	bool ancestor = false;
 	bool signalled = false;
@@ -210,7 +233,10 @@ static void vmpressure_work_fn(struct work_struct *work)
 	vmpr->tree_reclaimed = 0;
 	spin_unlock(&vmpr->sr_lock);
 
-	level = vmpressure_calc_level(scanned, reclaimed);
+	pressure = vmpressure_calc_pressure(scanned, reclaimed);
+	if (vmpr == memcg_to_vmpressure(root_mem_cgroup))
+		vmpressure_notify(pressure);
+	level = vmpressure_level(pressure);
 
 	do {
 		if (vmpressure_event(vmpr, level, ancestor, signalled))
