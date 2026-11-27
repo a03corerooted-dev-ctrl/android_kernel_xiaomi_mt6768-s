@@ -2,6 +2,16 @@ menu "Android"
 
 if ANDROID
 
+config ANDROID_LOW_MEMORY_KILLER
+	bool "Adaptive Android Low Memory Killer (ALMK)"
+	depends on MEMCG
+	default n
+	help
+	  Restore the in-kernel Android low memory killer with adaptive
+	  vmpressure-based oom_score_adj adjustment and tunable minfree
+	  thresholds. This replaces userspace lmkd on systems that detect
+	  the in-kernel lowmemorykiller driver.
+
 config ASHMEM
 	bool "Enable the Anonymous Shared Memory Subsystem"
 	default n
