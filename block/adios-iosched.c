@@ -1209,6 +1209,40 @@ static bool adios_allow_merge(struct request_queue *q, struct request *rq,
 	return adios_rq(rq)->hash == adios_index(task_tgid_nr(current), cgid);
 }
 
+/*
+ * The generic SQ hash covers back merges. Find front merges in the matching
+ * flow trees; the tree is deadline-ordered, not sector-ordered.
+ */
+static int adios_merge(struct request_queue *q, struct request **req,
+		       struct bio *bio)
+{
+	struct adios_data *ad = q->elevator->elevator_data;
+	struct adios_flow *f;
+	struct rb_node *node;
+	struct request *rq;
+	unsigned long flags;
+	sector_t bio_end = bio->bi_iter.bi_sector + bio_sectors(bio);
+	u8 hash = adios_index(task_tgid_nr(current),
+			      adios_bio_cgroup(bio, NULL));
+	int cls;
+
+	spin_lock_irqsave(&ad->lock, flags);
+	for (cls = 0; cls < ADIOS_CLASSES; cls++) {
+		f = &ad->flows[cls][hash];
+		for (node = rb_first_cached(&f->rqs); node; node = rb_next(node)) {
+			rq = rb_entry(node, struct request, rb_node);
+			if (blk_rq_pos(rq) == bio_end &&
+			    adios_allow_merge(q, rq, bio)) {
+				*req = rq;
+				spin_unlock_irqrestore(&ad->lock, flags);
+				return ELEVATOR_FRONT_MERGE;
+			}
+		}
+	}
+	spin_unlock_irqrestore(&ad->lock, flags);
+	return ELEVATOR_NO_MERGE;
+}
+
 
 static void adios_request_merged(struct request_queue *q, struct request *rq,
 				 enum elv_merge type)
@@ -1584,6 +1618,7 @@ static struct elevator_type adios_sched = {
 	.ops.sq = {
 		.elevator_init_fn		= adios_init_queue,
 		.elevator_exit_fn		= adios_exit_sched,
+		.elevator_merge_fn		= adios_merge,
 		.elevator_allow_bio_merge_fn	= adios_allow_merge,
 		.elevator_allow_rq_merge_fn	= adios_allow_rq_merge,
 		.elevator_merged_fn		= adios_request_merged,
