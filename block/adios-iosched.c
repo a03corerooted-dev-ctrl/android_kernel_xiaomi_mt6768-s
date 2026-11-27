@@ -44,6 +44,8 @@
 #include <linux/hrtimer.h>
 #include <linux/init.h>
 #include <linux/ioprio.h>
+#include <linux/iocontext.h>
+#include <linux/sched.h>
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/math64.h>
@@ -1091,13 +1093,24 @@ static unsigned short adios_current_ioprio(void)
 {
 	struct io_context *ioc = current->io_context;
 	unsigned short prio = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_NONE, 0);
+	unsigned int class, level;
 
 	if (ioc)
 		prio = READ_ONCE(ioc->ioprio);
-	if (IOPRIO_PRIO_CLASS(prio) == IOPRIO_CLASS_NONE)
-		prio = IOPRIO_PRIO_VALUE(task_nice_ioclass(current),
-					 task_nice_ioprio(current));
-	return prio;
+	if (IOPRIO_PRIO_CLASS(prio) != IOPRIO_CLASS_NONE)
+		return prio;
+
+	class = IOPRIO_CLASS_BE;
+	level = (task_nice(current) + 20) / 5;
+	if (rt_task(current)) {
+		class = IOPRIO_CLASS_RT;
+		level = 0;
+	} else if (current->policy == SCHED_IDLE) {
+		class = IOPRIO_CLASS_IDLE;
+		level = 0;
+	}
+	return IOPRIO_PRIO_VALUE(class, min_t(unsigned int, level,
+					       IOPRIO_BE_NR - 1));
 }
 
 /*
