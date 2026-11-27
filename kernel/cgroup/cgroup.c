@@ -3452,7 +3452,7 @@ static ssize_t cgroup_pressure_enable_write(struct kernfs_open_file *of,
 	if (psi->enabled != enable) {
 		for (i = 0; i < NR_PSI_RESOURCES; i++)
 			cgroup_file_show(&cgrp->psi_files[i], enable);
-		psi->enabled = enable;
+		WRITE_ONCE(psi->enabled, enable);
 		psi_cgroup_enabled_sync(psi);
 	}
 
